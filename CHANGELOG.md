@@ -18,6 +18,15 @@
 
 ## Unreleased
 
+### 修复：Windows LAN 访问被跨源防护错误拦截
+
+- 修改目的：允许浏览器通过 Windows 主机的局域网 IP 访问 Pi Web 后正常发送指令。
+- 修改内容：API 跨源校验除比较 Next 请求 URL 外，也验证浏览器 `Origin` 是否与实际 HTTP `Host` 完全一致，兼容 Next 在生产环境中将内部请求 URL 规范为 `localhost` 的情况。
+- 安全边界：仍拒绝 `sec-fetch-site: cross-site` 请求，且仅放行 Origin 与 Host（协议、主机和端口）完全匹配的请求。
+- 影响范围：`lib/request-security.ts` 及其单元测试。
+- 验证方式：执行 request-security 单元测试、`npm run lint` 和 `npm run build`。
+- 兼容性说明：Windows 更新、构建、全局安装并重启 Pi Web 后生效。
+
 ### 调整：Provider 模型拉取的默认模型配置
 
 - 修改目的：让通过 `Fetch models` 批量导入的新模型默认匹配 OpenAI Responses 和多模态推理模型的常用配置。

@@ -6,6 +6,17 @@ function canonicalOrigin(value: string): string | null {
   }
 }
 
+function originMatchesRequestHost(origin: string, request: Request): boolean {
+  try {
+    const originUrl = new URL(origin);
+    const requestUrl = new URL(request.url);
+    const host = request.headers.get("host");
+    return host !== null && originUrl.protocol === requestUrl.protocol && originUrl.host === host;
+  } catch {
+    return false;
+  }
+}
+
 /** Reject browser cross-site API requests while preserving non-browser clients. */
 export function isApiRequestOriginAllowed(request: Request): boolean {
   const origin = request.headers.get("origin");
@@ -14,7 +25,8 @@ export function isApiRequestOriginAllowed(request: Request): boolean {
   if (!origin) return true;
 
   const requestOrigin = canonicalOrigin(request.url);
-  return requestOrigin !== null && canonicalOrigin(origin) === requestOrigin;
+  return (requestOrigin !== null && canonicalOrigin(origin) === requestOrigin)
+    || originMatchesRequestHost(origin, request);
 }
 
 export function shouldCheckApiRequestOrigin(request: Request): boolean {
