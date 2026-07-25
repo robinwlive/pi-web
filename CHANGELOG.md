@@ -18,6 +18,22 @@
 
 ## Unreleased
 
+### 调整：Provider 模型拉取的默认模型配置
+
+- 修改目的：让通过 `Fetch models` 批量导入的新模型默认匹配 OpenAI Responses 和多模态推理模型的常用配置。
+- 修改内容：自动追加的新模型默认使用 `openai-responses`，启用 Reasoning / thinking 与 Image input，并设置 `contextWindow` 为 `1050000`、`maxTokens` 为 `128000`。
+- 影响范围：仅影响 `Fetch models` 新追加的模型；已有模型和手动新增模型不变。
+- 验证方式：需要执行 `npm run lint` 和 `npm run build`。
+- 兼容性说明：已存在的同名模型不会被覆盖，因此需要重新拉取或手动编辑已有模型才能应用这些默认值。
+
+### 新增：从 OpenAI-compatible Provider 拉取模型列表
+
+- 修改目的：新增自定义 Provider 后，可以直接从 Provider 的 `/models` 接口批量导入模型，避免手动逐个添加模型 ID。
+- 修改内容：Provider 详情页右上角新增 `Fetch models` 按钮；后端根据当前 Provider 的 `baseUrl` 与 `apiKey` 请求 OpenAI-compatible `GET /models`，解析 `data[].id` 和 `display_name`，并将缺失模型追加到当前 Provider 配置中。
+- 影响范围：`components/ModelsConfig.tsx`、`app/api/models-config/fetch-models/route.ts`。
+- 验证方式：需要执行 `npm run lint` 和 `npm run build`；手动验证应覆盖成功拉取、重复模型不重复添加、接口错误展示和保存配置。
+- 兼容性说明：该功能只追加模型，不会自动覆盖已有模型配置，也不会自动保存；用户检查结果后仍需点击 `Save` 写入 `models.json`。
+
 ## 2026-07-25 - Windows 生产构建修复
 
 提交：`fix: constrain output tracing root on Windows`

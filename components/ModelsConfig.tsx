@@ -143,6 +143,12 @@ type ModelTestState =
   | { phase: "success"; latencyMs?: number; status?: number; responseText?: string }
   | { phase: "error"; message: string; latencyMs?: number; status?: number };
 
+type FetchModelsState =
+  | { phase: "idle" }
+  | { phase: "fetching" }
+  | { phase: "success"; added: number; total: number }
+  | { phase: "error"; message: string };
+
 type Selection =
   | { type: "provider"; name: string }
   | { type: "model"; providerName: string; index: number }
@@ -286,13 +292,30 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ── Provider detail ───────────────────────────────────────────────────────────
 
-function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
+function ProviderDetail({ name, provider, onChange, onRename, onDelete, onFetchModels }: {
   name: string; provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void; onRename: (n: string) => void; onDelete: () => void;
+  onFetchModels: () => Promise<{ added: number; total: number }>;
 }) {
   const [editingName, setEditingName] = useState(name);
+  const [fetchState, setFetchState] = useState<FetchModelsState>({ phase: "idle" });
   useEffect(() => setEditingName(name), [name]);
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
+
+  useEffect(() => {
+    setFetchState({ phase: "idle" });
+  }, [name]);
+
+  const handleFetchModels = useCallback(async () => {
+    setFetchState({ phase: "fetching" });
+    try {
+      const result = await onFetchModels();
+      setFetchState({ phase: "success", added: result.added, total: result.total });
+      setTimeout(() => setFetchState((current) => current.phase === "success" ? { phase: "idle" } : current), 2500);
+    } catch (error) {
+      setFetchState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }, [onFetchModels]);
 
   useEffect(() => {
     if (!provider.api) onChange({ ...provider, api: "openai-completions" });
@@ -301,13 +324,27 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <SectionTitle>Provider</SectionTitle>
-        <button onClick={onDelete}
-          style={{ padding: "3px 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11 }}>
-          Delete
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => void handleFetchModels()}
+            disabled={fetchState.phase === "fetching"}
+            title="Fetch models from the provider's OpenAI-compatible /models endpoint"
+            style={{ padding: "3px 8px", background: fetchState.phase === "success" ? "rgba(22,163,74,0.12)" : "none", border: "1px solid var(--border)", borderRadius: 4, color: fetchState.phase === "success" ? "#16a34a" : "var(--text-muted)", cursor: fetchState.phase === "fetching" ? "wait" : "pointer", fontSize: 11 }}
+          >
+            {fetchState.phase === "fetching" ? "Fetching..." : fetchState.phase === "success" ? `Added ${fetchState.added}/${fetchState.total}` : "Fetch models"}
+          </button>
+          <button onClick={onDelete}
+            style={{ padding: "3px 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11 }}>
+            Delete
+          </button>
+        </div>
       </div>
+      {fetchState.phase === "error" && (
+        <div style={{ marginTop: -8, fontSize: 11, color: "#f87171", overflowWrap: "anywhere" }}>{fetchState.message}</div>
+      )}
 
       <Field label="Provider name">
         <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
@@ -1385,6 +1422,58 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
     setSelection({ type: "provider", name: providerName });
   }, []);
 
+  const fetchProviderModels = useCallback(async (providerName: string): Promise<{ added: number; total: number }> => {
+    const provider = config.providers?.[providerName];
+    if (!provider) throw new Error(`Provider not found: ${providerName}`);
+
+    const res = await fetch("/api/models-config/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerName, provider }),
+    });
+    const data = await res.json() as { ok?: boolean; error?: string; models?: Array<{ id: string; name?: string }>; responseText?: string };
+    if (!res.ok || !data.ok) {
+      const details = data.responseText ? `: ${data.responseText}` : "";
+      throw new Error(`${data.error ?? `HTTP ${res.status}`}${details}`);
+    }
+
+    const remoteModels = data.models ?? [];
+    const existingModels = provider.models ?? [];
+    const existingIds = new Set(existingModels.map((model) => model.id));
+    const additions: ModelEntry[] = [];
+    for (const remote of remoteModels) {
+      const id = remote.id.trim();
+      if (!id || existingIds.has(id)) continue;
+      existingIds.add(id);
+      additions.push({
+        id,
+        name: remote.name || id,
+        api: "openai-responses",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 1050000,
+        maxTokens: 128000,
+      });
+    }
+
+    if (additions.length > 0) {
+      setConfig((prev) => {
+        const currentProvider = prev.providers?.[providerName] ?? provider;
+        return {
+          ...prev,
+          providers: {
+            ...(prev.providers ?? {}),
+            [providerName]: {
+              ...currentProvider,
+              models: [...(currentProvider.models ?? []), ...additions],
+            },
+          },
+        };
+      });
+    }
+    return { added: additions.length, total: remoteModels.length };
+  }, [config.providers]);
+
   const handleSave = useCallback(async () => {
     setSaving(true);
     setSaveError(null);
@@ -1433,6 +1522,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          onFetchModels={() => fetchProviderModels(selection.name)}
         />
       );
     }
