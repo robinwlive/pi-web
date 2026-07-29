@@ -12,6 +12,7 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { deleteResponseTimingSidecar } from "@/lib/response-timing-store";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -131,7 +132,7 @@ export async function GET(
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
+    const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages, sessionFile: filePath });
 
     const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
@@ -238,6 +239,7 @@ export async function DELETE(
     } catch { /* skip if dir unreadable */ }
 
     getRpcSession(id)?.destroy();
+    try { deleteResponseTimingSidecar(filePath); } catch { /* timing data must not block session deletion */ }
     unlinkSync(filePath);
     invalidateSessionPathCache(id);
     invalidateSessionListCache();

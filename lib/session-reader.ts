@@ -10,6 +10,7 @@ import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionCon
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { sessionPathKey } from "./session-path";
+import { mergeResponseTimings } from "./response-timing-store";
 import { resolveProject, type ProjectInfo } from "./worktree";
 
 export { getAgentDir };
@@ -204,7 +205,7 @@ export function getSessionEntries(filePath: string): SessionEntry[] {
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
-  options: { deferThinking?: boolean; deferToolResultImages?: boolean } = {},
+  options: { deferThinking?: boolean; deferToolResultImages?: boolean; sessionFile?: string } = {},
 ): SessionContext {
   const byId = new Map<string, SessionEntry>();
   for (const e of entries) byId.set(e.id, e);
@@ -232,7 +233,7 @@ export function buildSessionContext(
   }
 
   return {
-    messages,
+    messages: options.sessionFile ? mergeResponseTimings(options.sessionFile, messages) : messages,
     entryIds,
     thinkingLevel: piCtx.thinkingLevel,
     model: piCtx.model,

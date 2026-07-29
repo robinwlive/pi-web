@@ -6,6 +6,7 @@ import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
+import { formatMillisecondsTime, formatResponseDuration, formatResponseTimeline, formatTokensPerSecond } from "@/lib/response-timing";
 import type {
   AgentMessage,
   UserMessage,
@@ -66,6 +67,8 @@ interface Props {
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
   showTimestamp?: boolean;
+  showResponseStart?: boolean;
+  responseTimelineStartedAt?: number;
   prevTimestamp?: number;
   sessionId?: string;
 }
@@ -97,12 +100,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, showResponseStart, responseTimelineStartedAt, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} showResponseStart={showResponseStart} responseTimelineStartedAt={responseTimelineStartedAt} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -132,6 +135,8 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.prevAssistantEntryId === next.prevAssistantEntryId
     && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
+    && prev.showResponseStart === next.showResponseStart
+    && prev.responseTimelineStartedAt === next.responseTimelineStartedAt
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId;
 });
@@ -344,6 +349,8 @@ function AssistantMessageView({
   cwd,
   onOpenFile,
   showTimestamp,
+  showResponseStart,
+  responseTimelineStartedAt,
   prevTimestamp,
   sessionId,
   entryId,
@@ -355,6 +362,8 @@ function AssistantMessageView({
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   showTimestamp?: boolean;
+  showResponseStart?: boolean;
+  responseTimelineStartedAt?: number;
   prevTimestamp?: number;
   sessionId?: string;
   entryId?: string;
@@ -521,6 +530,11 @@ function AssistantMessageView({
             </>
           );
         })()}
+        {showResponseStart !== false && message.responseStartedAt && (
+          <span title="First model response received">
+            {formatMillisecondsTime(message.responseStartedAt)}
+          </span>
+        )}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -534,7 +548,7 @@ function AssistantMessageView({
       }}>
         {message.usage && !isStreaming && (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {formatUsage(message.usage)}
+            {formatUsage(message.usage, message.responseRequestedAt, message.responseStartedAt, message.responseEndedAt, responseTimelineStartedAt)}
           </div>
         )}
         {textContent && !isStreaming && (
@@ -1354,18 +1368,37 @@ function getToolPreview(block: ToolCallContent): string {
   return String(first).slice(0, 120);
 }
 
-function formatUsage(usage: {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: { total: number };
-}): string {
+function formatUsage(
+  usage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cost: { total: number };
+  },
+  responseRequestedAt?: number,
+  responseStartedAt?: number,
+  responseEndedAt?: number,
+  responseTimelineStartedAt?: number,
+): string {
   const parts = [];
   if (usage.input) parts.push(`${usage.input.toLocaleString()} in`);
   if (usage.output) parts.push(`${usage.output.toLocaleString()} out`);
   if (usage.cacheRead) parts.push(`${usage.cacheRead.toLocaleString()} cache`);
   if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
+  if (responseStartedAt && responseEndedAt) {
+    const generationMs = responseEndedAt - responseStartedAt;
+    parts.push(formatResponseTimeline(responseTimelineStartedAt ?? responseStartedAt, responseEndedAt));
+    if (responseRequestedAt && responseRequestedAt <= responseStartedAt) {
+      parts.push(`TTFT ${formatResponseDuration(responseStartedAt - responseRequestedAt)}`);
+    }
+    parts.push(`${formatResponseDuration(generationMs)} gen`);
+    if (responseRequestedAt && responseRequestedAt <= responseEndedAt) {
+      parts.push(`${formatResponseDuration(responseEndedAt - responseRequestedAt)} call`);
+    }
+    const tokensPerSecond = formatTokensPerSecond(usage.output, generationMs);
+    if (tokensPerSecond) parts.push(tokensPerSecond);
+  }
   return parts.join(" · ");
 }
 

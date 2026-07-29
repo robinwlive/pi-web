@@ -61,6 +61,10 @@ export interface AssistantMessage {
   stopReason?: string;
   errorMessage?: string;
   timestamp?: number;
+  /** Timing observed by pi-web while relaying this model response. */
+  responseRequestedAt?: number;
+  responseStartedAt?: number;
+  responseEndedAt?: number;
   usage?: {
     input: number;
     output: number;

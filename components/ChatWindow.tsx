@@ -5,6 +5,8 @@ import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecuti
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
+import { formatLatencyStats, formatMillisecondsTime, formatResponseDuration, formatTokensPerSecond } from "@/lib/response-timing";
+import { getTurnStats, type TurnStats } from "@/lib/response-metrics";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -163,6 +165,57 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
         <div style={{ marginTop: 8 }}>
           {children}
         </div>
+      )}
+    </div>
+  );
+}
+
+function TurnSummary({ stats }: { stats: TurnStats }) {
+  const requestSpanMs = stats.completedAt - stats.firstRequestAt;
+  const responseSpanMs = stats.completedAt - stats.firstResponseAt;
+  const outputRate = formatTokensPerSecond(stats.outputTokens, stats.modelGenerationMs);
+  const ttftStats = formatLatencyStats(stats.ttftMs);
+  const generationStats = formatLatencyStats(stats.generationMs);
+  const callStats = formatLatencyStats(stats.callMs);
+  const tokenParts = [];
+  if (stats.inputTokens > 0) tokenParts.push(`${stats.inputTokens.toLocaleString()} in`);
+  if (stats.outputTokens > 0) tokenParts.push(`${stats.outputTokens.toLocaleString()} out`);
+  if (stats.cacheTokens > 0) tokenParts.push(`${stats.cacheTokens.toLocaleString()} cache`);
+  const titleParts = [
+    "Model summary",
+    `${stats.interactions} measured ${stats.interactions === 1 ? "interaction" : "interactions"}`,
+  ];
+  if (stats.toolCalls > 0) titleParts.push(`${stats.toolCalls} ${stats.toolCalls === 1 ? "tool call" : "tool calls"}`);
+  const lineStyle = { display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", columnGap: 8, lineHeight: 1.5 } as const;
+  const labelStyle = { color: "var(--text-dim)" } as const;
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 11 }}>
+      <div style={{ marginBottom: 3, color: "var(--text)" }}>{titleParts.join(" · ")}</div>
+      {tokenParts.length > 0 && <div style={lineStyle}><span style={labelStyle}>Tokens</span><span>{tokenParts.join(" · ")}</span></div>}
+      <div style={lineStyle}>
+        <span style={labelStyle}>First response</span>
+        <span>{formatMillisecondsTime(stats.firstResponseAt)} → {formatMillisecondsTime(stats.completedAt)} ({formatResponseDuration(responseSpanMs)} response span)</span>
+      </div>
+      <div style={lineStyle}>
+        <span style={labelStyle}>Workflow</span>
+        <span>{formatMillisecondsTime(stats.firstRequestAt)} → {formatMillisecondsTime(stats.completedAt)} ({formatResponseDuration(requestSpanMs)} workflow span)</span>
+      </div>
+      <div style={lineStyle}>
+        <span style={labelStyle}>Model</span>
+        <span>{formatResponseDuration(stats.modelGenerationMs)} generation{outputRate ? ` · ${outputRate}` : ""}</span>
+      </div>
+      {stats.interactions === 1 ? (
+        <div style={lineStyle}>
+          <span style={labelStyle}>Performance</span>
+          <span>{stats.ttftMs[0] !== undefined ? `TTFT ${formatResponseDuration(stats.ttftMs[0])} · ` : ""}{stats.callMs[0] !== undefined ? `Call ${formatResponseDuration(stats.callMs[0])}` : ""}</span>
+        </div>
+      ) : (
+        <>
+          {ttftStats && <div style={lineStyle}><span style={labelStyle}>TTFT</span><span>{ttftStats}</span></div>}
+          {generationStats && <div style={lineStyle}><span style={labelStyle}>Generation</span><span>{generationStats}</span></div>}
+          {callStats && <div style={lineStyle}><span style={labelStyle}>Call</span><span>{callStats}</span></div>}
+        </>
       )}
     </div>
   );
@@ -532,7 +585,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean } = {}): ReactNode => {
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; showResponseStart?: boolean; responseTimelineStartedAt?: number } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
                 const prevAssistantEntryId =
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
@@ -570,6 +623,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                     prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
                     onEditContent={handleEditContent}
                     showTimestamp={showTimestamp}
+                    showResponseStart={options.showResponseStart}
+                    responseTimelineStartedAt={options.responseTimelineStartedAt}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                   />
@@ -616,6 +671,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
                 rendered.push(renderMessage(userIdx));
 
+                const turnStats = getTurnStats(messages, userIdx + 1, endIdx);
                 const processIndices: number[] = [];
                 for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
                   processIndices.push(processIdx);
@@ -656,10 +712,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 }
 
                 if (finalAnswerMessage) {
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
+                  rendered.push(renderMessage(finalAssistantIdx, {
+                    messageOverride: finalAnswerMessage,
+                    showResponseStart: turnStats ? false : undefined,
+                    responseTimelineStartedAt: turnStats?.firstResponseAt,
+                  }));
                 }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
                   rendered.push(renderMessage(renderIdx));
+                }
+                if (turnStats) {
+                  rendered.push(<TurnSummary key={`turn-summary-${userIdx}-${finalAssistantIdx}`} stats={turnStats} />);
                 }
                 idx = endIdx;
               }

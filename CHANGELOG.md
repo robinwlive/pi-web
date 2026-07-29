@@ -43,6 +43,18 @@
 - 验证方式：需要执行 `npm run lint` 和 `npm run build`；手动验证应覆盖成功拉取、重复模型不重复添加、接口错误展示和保存配置。
 - 兼容性说明：该功能只追加模型，不会自动覆盖已有模型配置，也不会自动保存；用户检查结果后仍需点击 `Save` 写入 `models.json`。
 
+## 2026-07-30 - 模型调用计时与整轮性能汇总
+
+提交：`feat: add model response timing metrics`
+
+- 修改目的：准确观察每次模型调用从请求、首字到完成的延迟与生成效率，并在一条用户指令触发多轮模型和工具调用时查看整轮性能。
+- 修改内容：每次已完成的模型消息显示首字到完成的毫秒级时间区间、TTFT、generation、call 和基于官方 output token 计算的 `t/s`；折叠过程后的最终答案显示本轮第一次模型首字到最终完成的累计区间，同时保留最后一次调用自己的性能指标。
+- 汇总口径：最终答案后新增 `Model summary`，汇总 measured interactions、工具调用、token/cache、首次响应区间、workflow span、模型总生成时间、加权 `t/s`，以及 TTFT、Generation、Call 的平均值、P50、最短和最长；样本不少于 20 次时额外显示 P95。
+- 持久化与生命周期：服务端按会话将计时写入独立的 `.pi-web-timings.json` sidecar，每个会话最多保留 500 条；刷新、浏览器切换和 SSE 重连后可恢复。Fork 仅复制目标分支包含的消息计时，删除会话时同步删除 sidecar，关闭服务前刷新待写数据。
+- 影响范围：模型事件计时状态、RPC 会话生命周期、session 读取与分支处理、assistant usage 行和最终答案汇总；不修改 pi JSONL 主格式，也不改变 HTML/JSON 导出内容。
+- 验证方式：全量单元测试 `141/141`、TypeScript、ESLint、production build 和 staged diff 检查均通过；生产服务重启后返回 HTTP 200，并确认最新 bundle 已加载。
+- 兼容性说明：无需迁移旧浏览器数据；更新后需要重新构建并重启 Pi Web。已有会话会从后续新产生的模型调用开始积累服务端计时。
+
 ## 2026-07-25 - Windows 生产构建修复
 
 提交：`fix: constrain output tracing root on Windows`

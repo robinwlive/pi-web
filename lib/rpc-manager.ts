@@ -1,6 +1,8 @@
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, Theme } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
+import { performance } from "perf_hooks";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { existsSync, writeFileSync } from "fs";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
@@ -9,6 +11,18 @@ import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "./types";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS } from "./custom-ui-terminal";
+import {
+  EMPTY_RESPONSE_TIMING_STATE,
+  observeResponseTiming,
+  type ResponseTimingState,
+} from "./response-timing-state";
+import {
+  assistantMessageTimestamps,
+  copyResponseTimingsForTimestamps,
+  flushResponseTimings,
+  readResponseTimings,
+  stageResponseTiming,
+} from "./response-timing-store";
 
 // ============================================================================
 // Types
@@ -89,6 +103,10 @@ class PlainTextTheme extends Theme {
 const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
+function observedNow(): number {
+  return performance.timeOrigin + performance.now();
+}
+
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
 
@@ -121,6 +139,11 @@ export class AgentSessionWrapper {
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
+  private responseTimingState: ResponseTimingState = { ...EMPTY_RESPONSE_TIMING_STATE };
+  private originalStreamFunction: AgentSessionLike["agent"]["streamFunction"];
+  private wrappedStreamFunction: AgentSessionLike["agent"]["streamFunction"];
+  private responseTimingWriteQueue: Promise<void> = Promise.resolve();
+  private responseTimingFlushEnabled = true;
   private _alive = true;
 
   constructor(public readonly inner: AgentSessionLike) {}
@@ -142,12 +165,45 @@ export class AgentSessionWrapper {
   }
 
   start(): void {
+    const streamFunction = this.inner.agent.streamFunction;
+    // Preserve pi's streamSimple identity checks; turn_start remains the fallback request boundary.
+    if (streamFunction && streamFunction !== streamSimple && !this.wrappedStreamFunction) {
+      this.originalStreamFunction = streamFunction;
+      this.wrappedStreamFunction = (model, context, options) => {
+        const transition = observeResponseTiming(
+          this.responseTimingState,
+          { type: "provider_request_start" },
+          observedNow(),
+        );
+        this.responseTimingState = transition.state;
+        return streamFunction(model, context, options);
+      };
+      this.inner.agent.streamFunction = this.wrappedStreamFunction;
+    }
+
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
       if (event.type === "agent_end") {
         invalidateSessionListCache();
       }
-      this.emit(event);
+
+      const observedAt = observedNow();
+      const transition = observeResponseTiming(this.responseTimingState, event, observedAt);
+      this.responseTimingState = transition.state;
+      const timedEvent = transition.event;
+      const message = timedEvent.message as { role?: string; timestamp?: number } | undefined;
+      let timingFileToFlush: string | undefined;
+      if (transition.completedTiming && message?.role === "assistant" && message.timestamp && this.sessionFile) {
+        try {
+          stageResponseTiming(this.sessionFile, message.timestamp, transition.completedTiming);
+          timingFileToFlush = this.sessionFile;
+        } catch (error) {
+          console.warn("[pi-web] failed to stage response timing:", error);
+        }
+      }
+      this.emit(timedEvent);
+      if (timingFileToFlush) this.enqueueResponseTimingFlush(timingFileToFlush);
+
       // Streaming / compaction / tool events flow through here; re-broadcast
       // the running-status snapshot so the sidebar can update live.
       notifyRunningChange();
@@ -256,6 +312,20 @@ export class AgentSessionWrapper {
 
   private emit(event: AgentEvent): void {
     for (const l of this.listeners) l(event);
+  }
+
+  private enqueueResponseTimingFlush(sessionFile: string): void {
+    this.responseTimingWriteQueue = this.responseTimingWriteQueue.then(() => new Promise<void>((resolve) => {
+      setImmediate(() => {
+        try {
+          if (this.responseTimingFlushEnabled) flushResponseTimings(sessionFile);
+        } catch (error) {
+          console.warn("[pi-web] failed to persist response timing:", error);
+        } finally {
+          resolve();
+        }
+      });
+    }));
   }
 
   private resetIdleTimer(): void {
@@ -420,7 +490,17 @@ export class AgentSessionWrapper {
           newSessionFile = forkedPath;
         }
 
-        const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        const forkedManager = SessionManager.open(newSessionFile, sessionDir);
+        const newSessionId = forkedManager.getSessionId();
+        try {
+          copyResponseTimingsForTimestamps(
+            currentSessionFile,
+            newSessionFile,
+            assistantMessageTimestamps(forkedManager.getEntries() as unknown[]),
+          );
+        } catch (error) {
+          console.warn("[pi-web] failed to copy response timings to fork:", error);
+        }
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
         this.destroy();
@@ -614,6 +694,17 @@ export class AgentSessionWrapper {
     this._alive = false;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.inner.isBashRunning) this.inner.abortBash();
+    if (this.sessionFile && Object.keys(readResponseTimings(this.sessionFile)).length > 0) {
+      try {
+        flushResponseTimings(this.sessionFile);
+      } catch (error) {
+        console.warn("[pi-web] failed to flush response timings during shutdown:", error);
+      }
+    }
+    this.responseTimingFlushEnabled = false;
+    if (this.originalStreamFunction && this.inner.agent.streamFunction === this.wrappedStreamFunction) {
+      this.inner.agent.streamFunction = this.originalStreamFunction;
+    }
     this.unsubscribe?.();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
