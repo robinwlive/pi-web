@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+import { clearSessionReadTime, markSessionRead } from "@/lib/session-read-state";
 
 declare global {
   interface Window {
@@ -28,6 +29,7 @@ interface Props {
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
+  onOpenDashboard?: () => void;
 }
 
 interface WorktreeEntry {
@@ -321,7 +323,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onOpenDashboard }: Props) {
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -435,8 +437,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     if (completedInBackground.length > 0 || newlyRunning.length > 0) {
       setUnreadSessionIds((prev) => {
         const next = new Set(prev);
-        newlyRunning.forEach((id) => next.delete(id));
-        completedInBackground.forEach((id) => next.add(id));
+        newlyRunning.forEach((id) => {
+          next.delete(id);
+          clearSessionReadTime(id);
+        });
+        completedInBackground.forEach((id) => {
+          next.add(id);
+          clearSessionReadTime(id);
+        });
         return next;
       });
     }
@@ -446,6 +454,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   useEffect(() => {
     if (!selectedSessionId) return;
+    markSessionRead(selectedSessionId);
     setUnreadSessionIds((prev) => {
       if (!prev.has(selectedSessionId)) return prev;
       const next = new Set(prev);
@@ -867,6 +876,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         </div>
 
+        {onOpenDashboard && (
+          <button
+            type="button"
+            onClick={onOpenDashboard}
+            style={{
+              width: "100%", height: 30, marginBottom: 8, padding: "0 9px",
+              display: "flex", alignItems: "center", gap: 7,
+              background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 6,
+              color: "var(--text-muted)", cursor: "pointer", fontSize: 11, textAlign: "left",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 45%, var(--border))"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.borderColor = "var(--border)"; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+            </svg>
+            Agent Board
+          </button>
+        )}
         {/* CWD picker */}
         <div ref={dropdownRef} style={{ position: "relative" }}>
           <button
