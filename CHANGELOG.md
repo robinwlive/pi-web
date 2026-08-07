@@ -39,6 +39,14 @@
 - 验证方式：执行 request-security 单元测试、`npm run lint` 和 `npm run build`。
 - 兼容性说明：Windows 更新、构建、全局安装并重启 Pi Web 后生效。
 
+### 调整：Provider 模型拉取的 API 类型继承自 Provider 配置
+
+- 修改目的：通过 `Fetch models` 批量导入的新模型，其 API 类型应与所属 Provider 配置的 API 类型保持一致，而不是固定写死为 `openai-responses`。
+- 修改内容：将 `additions.push` 中的 `api: "openai-responses"` 改为 `api: provider.api ?? "openai-completions"`，即读取当前 Provider 的 `api` 字段；未配置时回退到 `openai-completions`（与新建 Provider 的默认值一致）。
+- 影响范围：仅影响 `Fetch models` 新追加的模型；已有模型和手动新增模型不变。
+- 验证方式：已执行 `npm run lint` 和 `npm run build`。
+- 兼容性说明：已存在的同名模型不会被覆盖。
+
 ### 调整：Provider 模型拉取的默认模型配置
 
 - 修改目的：让通过 `Fetch models` 批量导入的新模型默认匹配 OpenAI Responses 和多模态推理模型的常用配置。

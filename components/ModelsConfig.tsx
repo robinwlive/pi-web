@@ -1448,7 +1448,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
       additions.push({
         id,
         name: remote.name || id,
-        api: "openai-responses",
+        api: provider.api ?? "openai-completions",
         reasoning: true,
         input: ["text", "image"],
         contextWindow: 1050000,
