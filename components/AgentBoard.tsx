@@ -81,6 +81,9 @@ function MinimizeIcon({ size = 13 }: { size?: number }) {
 function XIcon({ size = 13 }: { size?: number }) {
   return <svg {...iconProps} width={size} height={size} aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>;
 }
+function PinIcon({ size = 13 }: { size?: number }) {
+  return <svg {...iconProps} width={size} height={size} aria-hidden="true"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>;
+}
 
 interface Props {
   onBack: () => void;
@@ -134,6 +137,7 @@ export function AgentBoard({ onBack }: Props) {
     }, 30_000);
     return () => window.clearInterval(interval);
   }, [refresh]);
+  useEffect(() => { saveIds(UNREAD_STORAGE_KEY, unreadIds); }, [unreadIds]);
   useEffect(() => { saveIds(PINNED_STORAGE_KEY, pinnedIds); }, [pinnedIds]);
 
   useEffect(() => {
@@ -423,13 +427,21 @@ function BoardCard({ session, mobile, expanded, running, unread, pinned, isDraft
 
   const actionStyle = (disabled = false): CSSProperties => ({
     display: "inline-flex", alignItems: "center", gap: 5,
-    height: mobile ? 34 : 28, padding: "0 9px",
+    height: mobile ? 32 : 28, padding: "0 9px",
     border: "1px solid var(--border)", borderRadius: 4,
     background: "transparent", color: "var(--text-muted)",
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 11, opacity: disabled ? 0.4 : 1, flexShrink: 0,
     fontFamily: "inherit",
   });
+  const pinStyle: CSSProperties = {
+    width: mobile ? 32 : 28, height: mobile ? 32 : 28, padding: 0,
+    display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+    border: "1px solid var(--border)", borderRadius: 4,
+    background: pinned ? "color-mix(in srgb, var(--accent) 12%, var(--bg))" : "transparent",
+    color: pinned ? "var(--accent)" : "var(--text-muted)",
+    cursor: "pointer",
+  };
 
   return (
     <article
@@ -444,7 +456,7 @@ function BoardCard({ session, mobile, expanded, running, unread, pinned, isDraft
         bottom: mobile && expanded ? 0 : undefined,
         zIndex: mobile && expanded ? 200 : undefined,
         minWidth: 0,
-        minHeight: expanded ? (mobile ? 0 : 510) : 206,
+        minHeight: expanded ? (mobile ? 0 : 480) : 196,
         maxHeight: mobile && expanded ? "100dvh" : undefined,
         display: "flex",
         flexDirection: "column",
@@ -454,60 +466,55 @@ function BoardCard({ session, mobile, expanded, running, unread, pinned, isDraft
         background: "var(--bg-panel)",
         boxShadow: expanded ? "0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent)" : "0 1px 2px color-mix(in srgb, var(--text) 7%, transparent)",
         transition: "grid-column .18s ease, min-height .18s ease, border-color .18s ease, box-shadow .18s ease",
-        overflow: mobile && expanded ? "hidden" : "hidden",
+        overflow: "hidden",
       }}
     >
-      {/* 标题行：状态 + 会话标题 + pin */}
-      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+      {/* 第一行：状态块 + 标题（左）；操作按钮（右，展开时） / pin（右，收起时） */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <SessionStateIcon running={running} unread={unread} />
         <button type="button" onClick={handleTitleClick} title={expanded ? "Collapse session" : "Expand session"} style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "center", padding: 0, border: 0, background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12, fontWeight: 650, textAlign: "left" }}>
-          <span style={{ width: 16, display: "inline-flex", alignItems: "center", justifyContent: "flex-start", flexShrink: 0 }}><SessionStateIcon running={running} unread={unread} /></span>
           <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isDraft ? "New session" : sessionTitle(session)}</span>
         </button>
-        {!isDraft && (
-          <button type="button" onClick={onPin} title={pinned ? "Unpin from board" : "Pin to board"} aria-label={pinned ? "Unpin from board" : "Pin to board"} style={{ width: 24, height: 24, padding: 0, border: 0, borderRadius: 4, background: pinned ? "color-mix(in srgb, var(--accent) 12%, var(--bg))" : "transparent", color: pinned ? "var(--accent)" : "var(--text-dim)", cursor: "pointer", flexShrink: 0 }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>
-          </button>
+        {expanded ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: mobile ? "wrap" : "nowrap" }}>
+            {!isDraft && <button type="button" onClick={onNewSession} title="New session in this workspace" style={actionStyle()}><PlusIcon /><span>New</span></button>}
+            <button type="button" onClick={onJumpPrevious} disabled={!canJumpPrevious} title="Back to previous jump" style={actionStyle(!canJumpPrevious)}><SkipBackIcon /><span>Prev</span></button>
+            <button type="button" onClick={onJumpNext} title="Next running/unread session" style={actionStyle()}><SkipForwardIcon /><span>Next</span></button>
+            {!isDraft && <button type="button" onClick={onOpenFiles} title="Manage workspace files" style={actionStyle()}><FolderOpenIcon /><span>Files</span></button>}
+            {!isDraft && <button type="button" onClick={onPin} title={pinned ? "Unpin from board" : "Pin to board"} aria-label={pinned ? "Unpin from board" : "Pin to board"} style={pinStyle}><PinIcon size={12} /></button>}
+            {mobile ? (
+              <button type="button" onClick={onCollapse} title="Exit fullscreen session" style={actionStyle()}><MinimizeIcon /><span>Exit</span></button>
+            ) : (
+              <>
+                <button type="button" onClick={toggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} style={actionStyle()}>{isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}</button>
+                <button type="button" onClick={onCollapse} title="Collapse session" style={actionStyle()}><XIcon /></button>
+              </>
+            )}
+          </div>
+        ) : (
+          !isDraft && <button type="button" onClick={onPin} title={pinned ? "Unpin from board" : "Pin to board"} aria-label={pinned ? "Unpin from board" : "Pin to board"} style={pinStyle}><PinIcon size={12} /></button>
         )}
       </div>
 
-      {/* 工作区行（独立、醒目，展示完整路径） */}
-      <div title={session.cwd} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, margin: "8px 0 7px", padding: "4px 7px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--text-dim)" }}><FolderIcon size={11} /></span>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.cwd}</span>
+      {/* 第二行：工作区路径（PiRouter node-badge 风格圆角标签） */}
+      <div title={session.cwd} style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, marginTop: 8 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, maxWidth: "100%", padding: "2px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "color-mix(in srgb, var(--border) 30%, var(--bg))", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-muted)" }}>
+          <span style={{ display: "inline-flex", flexShrink: 0, color: "var(--text-dim)" }}><FolderIcon size={10} /></span>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.cwd}</span>
+        </span>
       </div>
 
-      {/* 摘要 */}
-      <div style={{ height: expanded ? 38 : 55, margin: "0 0 8px", padding: "7px 8px", overflow: "hidden", borderLeft: "2px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10, lineHeight: 1.45 }}>{isDraft ? "Type a message to start this session." : (session.firstMessage || "No prompt recorded")}</div>
-
-      {/* 时间行 */}
-      <div style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{relativeTime(session.modified)} ago · {session.messageCount} msgs</div>
-
-      {/* 操作栏（展开时） */}
-      {expanded && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)", flexWrap: mobile ? "wrap" : "nowrap" }}>
-          {!isDraft && (
-            <button type="button" onClick={onNewSession} title="New session in this workspace" style={actionStyle()}><PlusIcon /><span>New</span></button>
-          )}
-          <button type="button" onClick={onJumpPrevious} disabled={!canJumpPrevious} title="Back to previous jump" style={actionStyle(!canJumpPrevious)}><SkipBackIcon /><span>Prev</span></button>
-          <button type="button" onClick={onJumpNext} title="Next running/unread session" style={actionStyle()}><SkipForwardIcon /><span>Next</span></button>
-          {!isDraft && (
-            <button type="button" onClick={onOpenFiles} title="Manage workspace files" style={actionStyle()}><FolderOpenIcon /><span>Files</span></button>
-          )}
-          <span style={{ flex: 1 }} />
-          {mobile ? (
-            <button type="button" onClick={onCollapse} title="Exit fullscreen session" style={actionStyle()}><MinimizeIcon /><span>Exit</span></button>
-          ) : (
-            <>
-              <button type="button" onClick={toggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} style={actionStyle()}>{isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}<span>{isFullscreen ? "Exit" : "Full"}</span></button>
-              <button type="button" onClick={onCollapse} title="Collapse session" style={actionStyle()}><XIcon /><span>Close</span></button>
-            </>
-          )}
-        </div>
+      {/* 收起时：摘要 + 时间 */}
+      {!expanded && (
+        <>
+          <div style={{ height: 44, margin: "8px 0 6px", padding: "6px 8px", overflow: "hidden", borderLeft: "2px solid var(--border)", background: "var(--bg)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10, lineHeight: 1.4 }}>{isDraft ? "Type a message to start this session." : (session.firstMessage || "No prompt recorded")}</div>
+          <div style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{relativeTime(session.modified)} ago · {session.messageCount} msgs</div>
+        </>
       )}
 
-      {/* 聊天区（展开时） */}
+      {/* 展开时：直接聊天区（只保留上方两行非关键区） */}
       {expanded && (
-        <div style={{ flex: mobile ? 1 : undefined, height: mobile ? undefined : "min(70dvh,720px)", minHeight: mobile ? 0 : 420, marginTop: 12, paddingTop: 11, borderTop: "1px solid var(--border)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: mobile ? 1 : undefined, height: mobile ? undefined : "min(70dvh,720px)", minHeight: mobile ? 0 : 400, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <ChatWindow
             session={isDraft ? null : session}
             newSessionCwd={isDraft ? session.cwd : null}
@@ -524,13 +531,15 @@ function BoardCard({ session, mobile, expanded, running, unread, pinned, isDraft
 }
 
 function SessionStateIcon({ running, unread }: { running: boolean; unread: boolean }) {
+  // PiRouter 风格状态块：running=蓝色实心块+白呼吸点，unread=蓝色块，已读/其他=灰色块
+  const base: CSSProperties = { width: 14, height: 14, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 3 };
   if (running) {
     return (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" aria-label="Running" style={{ flexShrink: 0 }}>
-        <g><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" /><path d="M20 12a8 8 0 1 1-2.34-5.66" /></g>
-      </svg>
+      <span aria-label="Running" title="Running" style={{ ...base, background: "var(--accent)" }}>
+        <span style={{ width: 7, height: 7, display: "block", borderRadius: "50%", background: "#fff", animation: "pulse 1.1s ease-in-out infinite" }} />
+      </span>
     );
   }
-  if (unread) return <span aria-label="Unread output" title="Unread output" style={{ width: 8, height: 8, background: "var(--accent)", flexShrink: 0 }} />;
-  return null;
+  if (unread) return <span aria-label="Unread output" title="Unread output" style={{ ...base, background: "var(--accent)" }} />;
+  return <span aria-label="Read" title="Read" style={{ ...base, background: "#c9d1dc" }} />;
 }
